@@ -23,11 +23,14 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DB_PATH = "knowledge_base.db"
-SIMILARITY_THRESHOLD = 0.68  # Lowered threshold for better recall
+SIMILARITY_THRESHOLD = 0.5  # Lowered threshold for better recall
 MAX_RESULTS = 10  # Increased to get more context
 load_dotenv()
 MAX_CONTEXT_CHUNKS = 4  # Increased number of chunks per source
 API_KEY = os.getenv("API_KEY")  # Get API key from environment variable
+
+if not API_KEY:
+    raise HTTPException(status_code=500, detail="API_KEY environment variable not set")
 
 # Models
 class QueryRequest(BaseModel):
@@ -249,8 +252,8 @@ async def find_similar_content(query_embedding, conn):
                 similarity = cosine_similarity(query_embedding, embedding)
                 if similarity >= SIMILARITY_THRESHOLD:
                     url = chunk["original_url"]
-                    if not url or not url.startswith("http"):
-                        url = f"https://docs.onlinedegree.iitm.ac.in/{chunk['doc_title']}"  # Default URL
+                    if not url.startswith("http"):
+                        url = f"https://discourse.onlinedegree.iitm.ac.in/t/{url}"  # Default URL
 
                     results.append({
                         "source": "markdown",
@@ -358,6 +361,9 @@ async def enrich_with_adjacent_chunks(conn, results):
 async def generate_answer(question, relevant_results, max_retries=2):
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API_KEY environment variable not set")
+    
+    if len(context) > 4000:
+        context = context[:4000] + "..."  # Truncate context if too long
 
     retries = 0
     while retries < max_retries:
@@ -409,7 +415,7 @@ async def process_multimodal_query(question, image_base64):
         raise HTTPException(status_code=500, detail="API_KEY environment variable not set")
 
     try:
-        if not image_base64:
+        if not image_base64 or not isinstance(image_base64, str) or len(image_base64) < 100:
             return await get_embedding(question)
 
         image_content = f"data:image/jpeg;base64,{image_base64}"
@@ -513,10 +519,10 @@ async def query_knowledge_base(
     try:
         # Validate the question
         if not request.question or len(request.question.strip()) < 5:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "The question must be at least 5 characters long."}
-            )
+            return {
+                "answer": "The question must be at least 5 characters long.",
+                "links": []
+            }
 
         # Log the incoming request
         logger.info(f"Received query request: question='{request.question[:50]}...', image_provided={request.image is not None}")
@@ -524,10 +530,10 @@ async def query_knowledge_base(
         if not API_KEY:
             error_msg = "API_KEY environment variable not set"
             logger.error(error_msg)
-            return JSONResponse(
-                status_code=500,
-                content={"error": error_msg}
-            )
+            return {
+                "answer": "Sorry, I couldn't process your request due to an internal error.",
+                "links": []
+            }
 
         conn = get_db_connection()
 
@@ -598,10 +604,10 @@ async def query_knowledge_base(
             error_msg = f"Error processing query: {e}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            return JSONResponse(
-                status_code=500,
-                content={"error": error_msg}
-            )
+            return {
+                "answer": "Sorry, I couldn't process your request due to an internal error.",
+                "links": []
+            }
         finally:
             conn.close()
     except Exception as e:
@@ -609,10 +615,10 @@ async def query_knowledge_base(
         error_msg = f"Unhandled exception in query_knowledge_base: {e}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": error_msg}
-        )
+        return {
+            "answer": "Sorry, I couldn't process your request due to an internal error.",
+            "links": []
+        }
 
 # Health check endpoint
 @app.get("/health")
@@ -654,6 +660,6 @@ async def health_check():
             content={"status": "unhealthy", "error": str(e), "api_key_set": bool(API_KEY)}
         )
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", port=8000, reload=True) 
-    print("Server is running on http://127.0.0.1:8000")
+# if __name__ == "__main__":
+#     uvicorn.run("main:app", port=8000, reload=True) 
+#     print("Server is running on http://127.0.0.1:8000")

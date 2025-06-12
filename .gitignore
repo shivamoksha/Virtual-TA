@@ -10,4 +10,5 @@ venv/
 preprocess.py
 *.pyc
 .DS_Store
-project-tds-virtual-ta-promptfoo.yaml
+project-tds-virtual-ta-q1.webp
+.vercel
